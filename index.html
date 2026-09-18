@@ -204,89 +204,82 @@
     function parseSpeechToScores(text) {
       let cleanText = text;
     
-      // 1. 口語文字預處理（轉換台灣常用口音與說法）
+      // 1. 口語文字與同音字預處理
       cleanText = cleanText
-        // 符號與加減轉換
         .replace(/(家家|佳佳|甲甲|加加)/g, '++')
-        // 同音字/常見誤判詞替換 (單加)
         .replace(/(家|佳|甲|加)/g, '+')
-        // 同音字/常見誤判詞替換 (減號)
         .replace(/(剪|簡|檢|減)/g, '-')
-        // 英文與數學詞彙處理
         .replace(/ plus/gi, '+')
         .replace(/ minus/gi, '-')
         .replace(/點/g, '.')
-        // 剔除常見贅字
         .replace(/分/g, '')
         .replace(/號碼/g, '號');
-
-      
     
-      // 2. 中文數字轉阿拉伯數字對照表（處理「六五」、「八十五」等情況）
+      // 中文數字對照表與轉換函式
       const zhNumMap = {
         '零': 0, '一': 1, '二': 2, '兩': 2, '三': 3, '四': 4,
         '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10
       };
     
-      // 將中文數字口述（如「六五」、「七十二」）轉為數字字串
     function parseZhNumber(str) {
-      if (!str) return str;
-      // 如果本身就是純數字，直接回傳
-      if (/^\d+(\.\d+)?$/.test(str)) return str;
-  
-      // 處理「六五」、「七八」這類直接唸數字的口吻
-      let result = '';
-      let isZhNum = true;
-      for (let char of str) {
-        if (zhNumMap[char] !== undefined && zhNumMap[char] < 10) {
-          result += zhNumMap[char];
-        } else {
-          isZhNum = false;
-          break;
+        if (!str) return str;
+        if (/^\d+(\.\d+)?$/.test(str)) return str;
+    
+        let result = '';
+        let isZhNum = true;
+        for (let char of str) {
+          if (zhNumMap[char] !== undefined && zhNumMap[char] < 10) {
+            result += zhNumMap[char];
+          } else {
+            isZhNum = false;
+            break;
+          }
         }
-      }
-      if (isZhNum && result.length > 0) return result;
-  
-      // 處理「八十五」、「十二」這類帶有十位數的口吻
-      if (str.includes('十')) {
-        let parts = str.split('十');
-        let tens = parts[0] ? (zhNumMap[parts[0]] || 1) : 1;
-        let ones = parts[1] ? (zhNumMap[parts[1]] || 0) : 0;
-        return String(tens * 10 + ones);
-      }
-  
-      return str;
-    }
+        if (isZhNum && result.length > 0) return result;
     
-      // 3. 正則表達式匹配：捕捉「[座號]號 [成績]」結構
-      // 支持英文字母(A-F)、加減號(+/-)、阿拉伯數字與中文數字
-      const regex = /(?<seat>\d+|[一二三四五六七八九十兩]+)\s*號\s*(?<score>[A-Za-z0-9\+\.\-\u4e00-\u9fa5]+)/g;
-      let match;
-    
-      while ((match = regex.exec(cleanText)) !== null) {
-        let rawSeat = match.groups.seat;
-        let rawScore = match.groups.score.trim();
-    
-        // 解析座號 (例如「八號」轉成 8)
-        let seat = parseZhNumber(rawSeat);
-    
-        // 解析成績 (例如「六五」轉成 65)
-        let score = parseZhNumber(rawScore);
-    
-        // 如果成績包含英文 A-F 及其加減號，轉成大寫 (例如 a+ 轉成 A+)
-        if (/^[a-fA-F][\+\-]*$/.test(score)) {
-          score = score.toUpperCase();
-        } else if (!isNaN(score) && score !== '') {
-          score = Number(score);
+        if (str.includes('十')) {
+          let parts = str.split('十');
+          let tens = parts[0] ? (zhNumMap[parts[0]] || 1) : 1;
+          let ones = parts[1] ? (zhNumMap[parts[1]] || 0) : 0;
+          return String(tens * 10 + ones);
         }
-    
-        // 存入成績資料物件
-        if (seat) {
-          scoreData[seat] = score;
-        }
+        return str;
       }
     
-      // 重新渲染畫面上的表格
+      // 2. 切割法解析：以「號」為邊界拆分，避免連續數字黏住
+      // 例如 "1號892號90" 會被拆成 ["1", "892", "90"] 的結構處理
+      const segments = cleanText.split('號');
+    
+      for (let i = 0; i < segments.length - 1; i++) {
+        // 當前區段的末尾是座號 (例如 segments[0] 是 "1")
+        let rawSeat = segments[i].match(/(\d+|[一二三四五六七八九十兩]+)$/);
+        // 下一個區段的開頭是成績 (例如 segments[1] 是 "892" -> 需取前段作為成績)
+        let nextSeg = segments[i + 1];
+    
+        if (rawSeat) {
+          let seat = parseZhNumber(rawSeat[0]);
+    
+          // 提取成績：成績通常是英文(A-F及加減) 或 數字(含小數點)
+          // 如果下一段黏著下一個座號 (如 "892")，這裡使用正則提取合法的成績部分
+          let scoreMatch = nextSeg.match(/^([a-fA-F][\+\-]*|\d+(?:\.\d+)?|[一二三四五六七八九十兩\+\-]+)/);
+    
+          if (scoreMatch) {
+            let rawScore = scoreMatch[0];
+            let score = parseZhNumber(rawScore);
+    
+            if (/^[a-fA-F][\+\-]*$/.test(score)) {
+              score = score.toUpperCase();
+            } else if (!isNaN(score) && score !== '') {
+              score = Number(score);
+            }
+    
+            if (seat) {
+              scoreData[seat] = score;
+            }
+          }
+        }
+      }
+    
       renderTable();
     }
 
