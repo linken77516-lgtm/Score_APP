@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>學生成績登記系統</title>
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+  <style>
+    body { background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .card { border-radius: 12px; border: none; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    .btn-voice { width: 100%; padding: 15px; font-size: 1.1rem; border-radius: 10px; }
+    .voice-recording { animation: pulse 1.5s infinite; background-color: #dc3545 !important; border-color: #dc3545 !important; color: white !important; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+    .table-container { max-height: 350px; overflow-y: auto; }
+  </style>
+</head>
+<body class="py-3">
+  <div class="container" style="max-width: 600px;">
+    
+    <div class="text-center mb-3">
+      <h4 class="fw-bold text-primary"><i class="bi bi-journal-check me-2"></i>成績登記系統</h4>
+    </div>
+
+    <!-- 選單卡片 -->
+    <div class="card p-3 mb-3">
+      <div class="row g-2">
+        <div class="col-6">
+          <label class="form-label small text-muted mb-1">年度</label>
+          <select id="yearSelect" class="form-select form-select-sm"></select>
+        </div>
+        <div class="col-6">
+          <label class="form-label small text-muted mb-1">學期</label>
+          <select id="semesterSelect" class="form-select form-select-sm">
+            <option value="上">上學期</option>
+            <option value="下">下學期</option>
+          </select>
+        </div>
+        <div class="col-6">
+          <label class="form-label small text-muted mb-1">班級</label>
+          <select id="classSelect" class="form-select form-select-sm"></select>
+        </div>
+        <div class="col-6">
+          <label class="form-label small text-muted mb-1">測驗名稱</label>
+          <input type="text" id="examNameInput" class="form-control form-select-sm" placeholder="例如：第一次小考" value="第一次小考">
+        </div>
+      </div>
+    </div>
+
+    <!-- 語音/手動輸入卡片 -->
+    <div class="card p-3 mb-3">
+      <button id="voiceBtn" class="btn btn-primary btn-voice mb-2">
+        <i class="bi bi-mic-fill me-2"></i>點擊開始語音登記
+      </button>
+      <div class="form-text text-center mb-2">
+        口述範例：「1號85分、2號A plus、3號72.5分」
+      </div>
+      
+      <div class="p-2 bg-light border rounded mb-2 small text-secondary" id="transcriptBox" style="min-height: 45px;">
+        <em>語音辨識內容將顯示於此...</em>
+      </div>
+
+      <div class="row g-2 align-items-center">
+        <div class="col-4">
+          <input type="number" id="manualSeat" class="form-control form-control-sm" placeholder="座號">
+        </div>
+        <div class="col-5">
+          <input type="text" id="manualScore" class="form-control form-control-sm" placeholder="成績 (85/A+)">
+        </div>
+        <div class="col-3">
+          <button id="addManualBtn" class="btn btn-outline-secondary btn-sm w-100">新增</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 成績預覽卡片 -->
+    <div class="card p-3 mb-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="fw-bold mb-0">成績確認清單 (<span id="scoreCount">0</span> 筆)</h6>
+        <button id="clearBtn" class="btn btn-link text-danger p-0 text-decoration-none small">清空</button>
+      </div>
+      
+      <div class="table-container border rounded">
+        <table class="table table-hover table-sm text-center mb-0">
+          <thead class="table-light sticky-top">
+            <tr>
+              <th width="30%">座號</th>
+              <th width="50%">成績</th>
+              <th width="20%">操作</th>
+            </tr>
+          </thead>
+          <tbody id="scoreTableBody">
+            <tr><td colspan="3" class="text-muted py-3">尚無登錄成績</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <button id="uploadBtn" class="btn btn-success mt-3 w-100 py-2 fw-bold" disabled>
+        <i class="bi bi-cloud-upload-fill me-2"></i>確認上傳至 Google 試算表
+      </button>
+    </div>
+
+  </div>
+
+  <script>
+    // ⚠️ 請填入第一步複製的 Google Apps Script Web App 網址
+    const GAS_WEB_APP_URL = "YOUR_GAS_WEB_APP_URL";
+
+    const scoreData = {};
+    let recognition = null;
+    let isRecording = false;
+
+    document.addEventListener("DOMContentLoaded", () => {
+      initDropdowns();
+      initSpeechRecognition();
+      bindEvents();
+    });
+
+    function initDropdowns() {
+      const now = new Date();
+      const year = now.getFullYear() - 1911;
+      const month = now.getMonth() + 1;
+
+      const yearSelect = document.getElementById("yearSelect");
+      for (let y = year - 1; y <= year + 1; y++) {
+        const option = document.createElement("option");
+        option.value = y;
+        option.textContent = `${y} 年`;
+        if (y === (month === 1 ? year - 1 : year)) option.selected = true;
+        yearSelect.appendChild(option);
+      }
+
+      document.getElementById("semesterSelect").value = (month >= 8 || month === 1) ? "上" : "下";
+
+      const classSelect = document.getElementById("classSelect");
+      [1, 2, 3].forEach(g => {
+        for (let c = 1; c <= 14; c++) {
+          const classNum = `${g}${c.toString().padStart(2, '0')}`;
+          const option = document.createElement("option");
+          option.value = classNum;
+          option.textContent = `${classNum} 班`;
+          classSelect.appendChild(option);
+        }
+      });
+    }
+
+    function initSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert("⚠️ 您的瀏覽器不支援 Web Speech API，請改用 Chrome 或 Safari。");
+        document.getElementById("voiceBtn").disabled = true;
+        return;
+      }
+
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'zh-TW';
+
+      recognition.onstart = () => {
+        isRecording = true;
+        const voiceBtn = document.getElementById("voiceBtn");
+        voiceBtn.classList.add("voice-recording");
+        voiceBtn.innerHTML = '<i class="bi bi-mic-fill me-2"></i>錄音中... (點擊停止)';
+      };
+
+      recognition.onresult = (event) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        document.getElementById("transcriptBox").textContent = transcript;
+        parseSpeechToScores(transcript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error("語音錯誤:", event.error);
+        stopRecording();
+        if (event.error === 'not-allowed') {
+          alert("❌ 麥克風權限被拒絕！請檢查瀏覽器設定允許麥克風存取。");
+        }
+      };
+
+      recognition.onend = () => stopRecording();
+    }
+
+    function toggleRecording() {
+      if (!recognition) return;
+      if (isRecording) {
+        recognition.stop();
+      } else {
+        recognition.start();
+      }
+    }
+
+    function stopRecording() {
+      isRecording = false;
+      const voiceBtn = document.getElementById("voiceBtn");
+      voiceBtn.classList.remove("voice-recording");
+      voiceBtn.innerHTML = '<i class="bi bi-mic-fill me-2"></i>點擊開始語音登記';
+    }
+
+    function parseSpeechToScores(text) {
+      let cleanText = text
+        .replace(/加/g, '+').replace(/減/g, '-')
+        .replace(/ plus/gi, '+').replace(/點/g, '.');
+
+      const regex = /(?<seat>\d+)\s*號\s*(?<score>[A-Za-z0-9\+\.\-]+)/g;
+      let match;
+
+      while ((match = regex.exec(cleanText)) !== null) {
+        const seat = match.groups.seat;
+        let score = match.groups.score;
+        scoreData[seat] = isNaN(score) ? score.toUpperCase() : Number(score);
+      }
+      renderTable();
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById("scoreTableBody");
+      tbody.innerHTML = "";
+
+      const seats = Object.keys(scoreData).sort((a, b) => Number(a) - Number(b));
+      document.getElementById("scoreCount").textContent = seats.length;
+      document.getElementById("uploadBtn").disabled = seats.length === 0;
+
+      if (seats.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="text-muted py-3">尚無登錄成績</td></tr>';
+        return;
+      }
+
+      seats.forEach(seat => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="align-middle fw-bold">${seat} 號</td>
+          <td>
+            <input type="text" class="form-control form-control-sm text-center mx-auto" style="max-width: 120px;" 
+                   value="${scoreData[seat]}" onchange="updateScore('${seat}', this.value)">
+          </td>
+          <td class="align-middle">
+            <button class="btn btn-outline-danger btn-sm py-0 px-2" onclick="deleteScore('${seat}')">
+              <i class="bi bi-trash"></i>
+            </button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    window.updateScore = (seat, val) => {
+      scoreData[seat] = isNaN(val) ? val.toUpperCase() : Number(val);
+    };
+
+    window.deleteScore = (seat) => {
+      delete scoreData[seat];
+      renderTable();
+    };
+
+    function bindEvents() {
+      document.getElementById("voiceBtn").addEventListener("click", toggleRecording);
+
+      document.getElementById("addManualBtn").addEventListener("click", () => {
+        const seatInput = document.getElementById("manualSeat");
+        const scoreInput = document.getElementById("manualScore");
+        const seat = seatInput.value.trim();
+        let score = scoreInput.value.trim();
+
+        if (!seat || !score) {
+          alert("請輸入座號與成績");
+          return;
+        }
+
+        scoreData[seat] = isNaN(score) ? score.toUpperCase() : Number(score);
+        seatInput.value = "";
+        scoreInput.value = "";
+        renderTable();
+      });
+
+      document.getElementById("clearBtn").addEventListener("click", () => {
+        if (confirm("確定要清空目前輸入的所有成績嗎？")) {
+          Object.keys(scoreData).forEach(key => delete scoreData[key]);
+          document.getElementById("transcriptBox").textContent = "語音辨識內容將顯示於此...";
+          renderTable();
+        }
+      });
+
+      // 上傳至 Google Apps Script 後端
+      document.getElementById("uploadBtn").addEventListener("click", () => {
+        const uploadBtn = document.getElementById("uploadBtn");
+        const examName = document.getElementById("examNameInput").value.trim();
+
+        if (!examName) {
+          alert("請填寫測驗名稱！");
+          return;
+        }
+
+        if (GAS_WEB_APP_URL === "YOUR_GAS_WEB_APP_URL") {
+          alert("❌ 請先在 index.html 程式碼中填入你的 Google Apps Script Web App URL！");
+          return;
+        }
+
+        const payload = {
+          year: document.getElementById("yearSelect").value,
+          classId: document.getElementById("classSelect").value,
+          semester: document.getElementById("semesterSelect").value,
+          examName: examName,
+          scores: scoreData
+        };
+
+        uploadBtn.disabled = true;
+        uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>上傳中...';
+
+        // 使用 fetch 送出資料給 GAS
+        fetch(GAS_WEB_APP_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" }, // 避免觸發 CORS preflight
+          body: JSON.stringify(payload)
+        })
+        .then(res => res.json())
+        .then(response => {
+          uploadBtn.disabled = false;
+          uploadBtn.innerHTML = '<i class="bi bi-cloud-upload-fill me-2"></i>確認上傳至 Google 試算表';
+
+          if (response.status === "success") {
+            alert("✅ " + response.message);
+            Object.keys(scoreData).forEach(key => delete scoreData[key]);
+            document.getElementById("transcriptBox").textContent = "語音辨識內容將顯示於此...";
+            renderTable();
+          } else {
+            alert("❌ 上傳失敗: " + response.message);
+          }
+        })
+        .catch(err => {
+          uploadBtn.disabled = false;
+          uploadBtn.innerHTML = '<i class="bi bi-cloud-upload-fill me-2"></i>確認上傳至 Google 試算表';
+          alert("❌ 連線錯誤: " + err);
+        });
+      });
+    }
+  </script>
+</body>
+</html>
